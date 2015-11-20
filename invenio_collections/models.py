@@ -21,6 +21,7 @@
 
 from invenio_db import db
 from sqlalchemy.event import listen
+from sqlalchemy.orm import foreign, remote
 from sqlalchemy_mptt.mixins import BaseNestedSets
 
 from .proxies import current_collections
@@ -37,9 +38,35 @@ class Collection(db.Model, BaseNestedSets):
                 'dbquery: {0.dbquery}>'.format(self))
 
     id = db.Column(db.Integer, primary_key=True)
+
     name = db.Column(db.String(255), unique=True, index=True, nullable=False)
 
     dbquery = db.Column(db.Text, nullable=True)
+
+    virtual = db.Column(db.Boolean, default=False)
+
+    reference = db.Column(db.Integer, db.ForeignKey('collection.id'))
+
+    referenced_collection = db.relationship(
+        'Collection', primaryjoin=remote(id) == foreign(reference))
+
+    def path_to_root(self, follow_virtual=False):
+        """Generate path from a leaf or intermediate node to the root.
+
+        :param follow_virtual: If set to False it stops when a virtual
+            collection is found, if not it continues.
+        """
+        path = super(Collection, self).path_to_root(session=db.session).all()
+        for collection in path:
+            yield collection
+            if collection.virtual and not follow_virtual:
+                raise StopIteration()
+
+    def _drilldown_query(self, nodes=None):
+        """Generate the filter to create a branch dereferencing collections."""
+        dereferenced_self = self if not self.reference else \
+            self.referenced_collection
+        return super(Collection, dereferenced_self)._drilldown_query(nodes)
 
 
 def collection_removed_or_inserted(mapper, connection, target):
